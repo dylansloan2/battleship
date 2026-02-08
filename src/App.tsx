@@ -1,6 +1,6 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import './App.css'
-import { Anchor, RotateCw, Play, RefreshCw, Crosshair, Shield, Trophy, ArrowLeft } from 'lucide-react'
+import { Anchor, RotateCw, Play, RefreshCw, Crosshair, Shield, Trophy, ArrowLeft, Settings, Volume2, VolumeX } from 'lucide-react'
 
 const BOARD_SIZE = 10
 const EMPTY = 0
@@ -186,6 +186,71 @@ function computeProbabilityMap(board: Board, ships: PlacedShip[]): number[][] {
 }
 
 const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J']
+
+function getSoundEnabled(): boolean {
+  try {
+    const val = localStorage.getItem('battleship-sound')
+    if (val !== null) return val === 'true'
+  } catch { /* empty */ }
+  return true
+}
+
+function setSoundEnabled(enabled: boolean) {
+  localStorage.setItem('battleship-sound', String(enabled))
+}
+
+let audioCtx: AudioContext | null = null
+function getAudioCtx(): AudioContext {
+  if (!audioCtx) audioCtx = new AudioContext()
+  return audioCtx
+}
+
+function playHitSound() {
+  const ctx = getAudioCtx()
+  const osc = ctx.createOscillator()
+  const gain = ctx.createGain()
+  osc.connect(gain)
+  gain.connect(ctx.destination)
+  osc.type = 'sawtooth'
+  osc.frequency.setValueAtTime(200, ctx.currentTime)
+  osc.frequency.exponentialRampToValueAtTime(60, ctx.currentTime + 0.15)
+  gain.gain.setValueAtTime(0.4, ctx.currentTime)
+  gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2)
+  osc.start(ctx.currentTime)
+  osc.stop(ctx.currentTime + 0.2)
+
+  const noise = ctx.createBufferSource()
+  const buf = ctx.createBuffer(1, ctx.sampleRate * 0.15, ctx.sampleRate)
+  const data = buf.getChannelData(0)
+  for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * 0.3
+  noise.buffer = buf
+  const noiseGain = ctx.createGain()
+  noise.connect(noiseGain)
+  noiseGain.connect(ctx.destination)
+  noiseGain.gain.setValueAtTime(0.3, ctx.currentTime)
+  noiseGain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15)
+  noise.start(ctx.currentTime)
+}
+
+function playMissSound() {
+  const ctx = getAudioCtx()
+  const noise = ctx.createBufferSource()
+  const buf = ctx.createBuffer(1, ctx.sampleRate * 0.25, ctx.sampleRate)
+  const data = buf.getChannelData(0)
+  for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * 0.15
+  noise.buffer = buf
+  const filter = ctx.createBiquadFilter()
+  filter.type = 'lowpass'
+  filter.frequency.setValueAtTime(800, ctx.currentTime)
+  filter.frequency.exponentialRampToValueAtTime(200, ctx.currentTime + 0.25)
+  const gain = ctx.createGain()
+  noise.connect(filter)
+  filter.connect(gain)
+  gain.connect(ctx.destination)
+  gain.gain.setValueAtTime(0.25, ctx.currentTime)
+  gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.25)
+  noise.start(ctx.currentTime)
+}
 
 function CellDisplay({ cell, isPlayer, onClick, isHover }: { cell: Cell; isPlayer: boolean; onClick?: () => void; isHover?: boolean }) {
   let bg = 'bg-sky-900'
@@ -415,9 +480,17 @@ function App() {
 
   const [aiHits, setAiHits] = useState<Coordinate[]>([])
   const [aiQueue, setAiQueue] = useState<Coordinate[]>([])
+  const [soundOn, setSoundOn] = useState(getSoundEnabled)
+  const [showSettings, setShowSettings] = useState(false)
+  const soundOnRef = useRef(soundOn)
 
   const currentShip = shipsToPlace[currentShipIndex]
   const opponent = OPPONENTS.find(o => o.id === difficulty)!
+
+  useEffect(() => {
+    soundOnRef.current = soundOn
+    setSoundEnabled(soundOn)
+  }, [soundOn])
 
   const handleDifficultySelect = useCallback((d: Difficulty) => {
     setDifficulty(d)
@@ -576,6 +649,7 @@ function App() {
 
       if (newBoard[target.row][target.col] === SHIP) {
         newBoard[target.row][target.col] = HIT
+        if (soundOnRef.current) playHitSound()
 
         if (difficulty === 'medium') {
           newHits = [...newHits, target]
@@ -624,6 +698,7 @@ function App() {
         }
       } else {
         newBoard[target.row][target.col] = MISS
+        if (soundOnRef.current) playMissSound()
       }
 
       setPlayerBoard(newBoard)
@@ -645,6 +720,7 @@ function App() {
     if (computerBoard[row][col] === SHIP) {
       newVisible[row][col] = HIT
       newActual[row][col] = HIT
+      if (soundOnRef.current) playHitSound()
 
       const updatedShips = computerShips.map(s => {
         if (!s.sunk && checkSunk(s, newActual)) {
@@ -681,6 +757,7 @@ function App() {
       setMessage('Direct hit!')
     } else {
       newVisible[row][col] = MISS
+      if (soundOnRef.current) playMissSound()
       setComputerVisibleBoard(newVisible)
       setMessage('Miss!')
     }
@@ -720,10 +797,39 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-sky-950 to-slate-900 flex flex-col">
-      <header className="flex items-center justify-center gap-3 py-5 bg-slate-900/60 border-b border-sky-800/40">
-        <Anchor className="text-sky-400" size={32} />
-        <h1 className="text-3xl font-extrabold text-white tracking-widest uppercase">Battleship</h1>
-        <Anchor className="text-sky-400" size={32} />
+      <header className="flex items-center justify-between px-6 py-5 bg-slate-900/60 border-b border-sky-800/40">
+        <div className="w-10" />
+        <div className="flex items-center gap-3">
+          <Anchor className="text-sky-400" size={32} />
+          <h1 className="text-3xl font-extrabold text-white tracking-widest uppercase">Battleship</h1>
+          <Anchor className="text-sky-400" size={32} />
+        </div>
+        <div className="relative">
+          <button
+            onClick={() => setShowSettings(!showSettings)}
+            className="p-2 text-sky-400 hover:text-white transition-colors rounded-lg hover:bg-sky-800/40"
+            title="Settings"
+          >
+            <Settings size={22} />
+          </button>
+          {showSettings && (
+            <div className="absolute right-0 top-12 bg-slate-800 border border-sky-700/50 rounded-xl shadow-2xl shadow-black/60 p-4 z-50 min-w-[200px]">
+              <h3 className="text-white font-bold text-sm mb-3 uppercase tracking-wider">Settings</h3>
+              <button
+                onClick={() => setSoundOn(!soundOn)}
+                className="flex items-center justify-between w-full px-3 py-2.5 rounded-lg hover:bg-sky-800/30 transition-colors"
+              >
+                <span className="text-sky-200 text-sm font-medium">Sound Effects</span>
+                <div className="flex items-center gap-2">
+                  {soundOn ? <Volume2 size={18} className="text-green-400" /> : <VolumeX size={18} className="text-red-400" />}
+                  <div className={`w-10 h-5 rounded-full flex items-center px-0.5 transition-colors ${soundOn ? 'bg-green-600' : 'bg-slate-600'}`}>
+                    <div className={`w-4 h-4 rounded-full bg-white transition-transform ${soundOn ? 'translate-x-5' : 'translate-x-0'}`} />
+                  </div>
+                </div>
+              </button>
+            </div>
+          )}
+        </div>
       </header>
 
       <div className="flex-1 flex flex-col items-center justify-center gap-6 p-4">
