@@ -1,6 +1,6 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import './App.css'
-import { Anchor, RotateCw, Play, RefreshCw, Crosshair, Shield } from 'lucide-react'
+import { Anchor, RotateCw, Play, RefreshCw, Crosshair, Shield, Trophy, ArrowLeft } from 'lucide-react'
 
 const BOARD_SIZE = 10
 const EMPTY = 0
@@ -34,7 +34,65 @@ interface PlacedShip {
   sunk: boolean
 }
 
-type GamePhase = 'placement' | 'battle' | 'gameover'
+type Difficulty = 'easy' | 'medium' | 'hard'
+type GamePhase = 'difficulty' | 'placement' | 'battle' | 'gameover'
+
+interface Opponent {
+  id: Difficulty
+  name: string
+  title: string
+  image: string
+  description: string
+  level: number
+}
+
+const OPPONENTS: Opponent[] = [
+  {
+    id: 'easy',
+    name: 'Rob Gronkowski',
+    title: 'The Party Animal',
+    image: '/images/gronkowski.jpg',
+    description: 'Gronk fires randomly -- not the sharpest strategist on the seas!',
+    level: 1,
+  },
+  {
+    id: 'medium',
+    name: 'Elon Musk',
+    title: 'The Innovator',
+    image: '/images/elon.jpg',
+    description: 'Elon uses smart targeting -- hunts down your ships after a hit.',
+    level: 2,
+  },
+  {
+    id: 'hard',
+    name: 'Magnus Carlsen',
+    title: 'The Grandmaster',
+    image: '/images/magnus.jpg',
+    description: 'Magnus plays chess-level strategy -- probability-based targeting.',
+    level: 3,
+  },
+]
+
+interface LeaderboardEntry {
+  opponent: string
+  shots: number
+  date: string
+}
+
+function getLeaderboard(): LeaderboardEntry[] {
+  try {
+    const data = localStorage.getItem('battleship-leaderboard')
+    if (data) return JSON.parse(data)
+  } catch { /* empty */ }
+  return []
+}
+
+function saveToLeaderboard(entry: LeaderboardEntry) {
+  const lb = getLeaderboard()
+  lb.push(entry)
+  lb.sort((a, b) => a.shots - b.shots)
+  localStorage.setItem('battleship-leaderboard', JSON.stringify(lb.slice(0, 50)))
+}
 
 function createEmptyBoard(): Board {
   return Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(EMPTY))
@@ -91,6 +149,40 @@ function markSunk(board: Board, ship: PlacedShip): Board {
   const newBoard = board.map(r => [...r])
   ship.coords.forEach(c => { newBoard[c.row][c.col] = SUNK })
   return newBoard
+}
+
+function computeProbabilityMap(board: Board, ships: PlacedShip[]): number[][] {
+  const prob: number[][] = Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(0))
+  const remainingShips = ships.filter(s => !s.sunk)
+
+  for (const ship of remainingShips) {
+    for (let r = 0; r < BOARD_SIZE; r++) {
+      for (let c = 0; c < BOARD_SIZE; c++) {
+        for (const horizontal of [true, false]) {
+          let valid = true
+          const cells: Coordinate[] = []
+          for (let i = 0; i < ship.size; i++) {
+            const cr = horizontal ? r : r + i
+            const cc = horizontal ? c + i : c
+            if (cr >= BOARD_SIZE || cc >= BOARD_SIZE) { valid = false; break }
+            const cell = board[cr][cc]
+            if (cell === MISS || cell === SUNK) { valid = false; break }
+            cells.push({ row: cr, col: cc })
+          }
+          if (valid) {
+            const hasHit = cells.some(coord => board[coord.row][coord.col] === HIT)
+            const weight = hasHit ? 20 : 1
+            cells.forEach(coord => {
+              if (board[coord.row][coord.col] === EMPTY || board[coord.row][coord.col] === SHIP) {
+                prob[coord.row][coord.col] += weight
+              }
+            })
+          }
+        }
+      }
+    }
+  }
+  return prob
 }
 
 const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J']
@@ -198,8 +290,115 @@ function BoardGrid({
   )
 }
 
+function DifficultySelect({ onSelect }: { onSelect: (d: Difficulty) => void }) {
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
+  const [showLeaderboard, setShowLeaderboard] = useState(false)
+
+  useEffect(() => {
+    setLeaderboard(getLeaderboard())
+  }, [])
+
+  if (showLeaderboard) {
+    return (
+      <div className="flex flex-col items-center gap-6 p-4 max-w-2xl mx-auto">
+        <button
+          onClick={() => setShowLeaderboard(false)}
+          className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium transition-colors self-start"
+        >
+          <ArrowLeft size={16} />
+          Back
+        </button>
+        <div className="flex items-center gap-3">
+          <Trophy className="text-yellow-400" size={28} />
+          <h2 className="text-2xl font-bold text-white">Leaderboard</h2>
+          <Trophy className="text-yellow-400" size={28} />
+        </div>
+        <p className="text-sky-300 text-sm">Fewest shots to win -- lower is better!</p>
+        {leaderboard.length === 0 ? (
+          <p className="text-sky-400 text-lg mt-8">No games played yet. Beat an opponent to get on the board!</p>
+        ) : (
+          <div className="w-full bg-slate-800/60 rounded-xl border border-sky-800/40 overflow-hidden">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-sky-800/40">
+                  <th className="px-4 py-3 text-left text-sky-400 text-sm font-semibold">#</th>
+                  <th className="px-4 py-3 text-left text-sky-400 text-sm font-semibold">Opponent</th>
+                  <th className="px-4 py-3 text-left text-sky-400 text-sm font-semibold">Shots</th>
+                  <th className="px-4 py-3 text-left text-sky-400 text-sm font-semibold">Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {leaderboard.slice(0, 20).map((entry, i) => (
+                  <tr key={i} className={`border-b border-sky-900/30 ${i < 3 ? 'bg-yellow-900/10' : ''}`}>
+                    <td className="px-4 py-2.5 text-white font-bold">
+                      {i === 0 ? '\u{1F947}' : i === 1 ? '\u{1F948}' : i === 2 ? '\u{1F949}' : i + 1}
+                    </td>
+                    <td className="px-4 py-2.5 text-sky-200">{entry.opponent}</td>
+                    <td className="px-4 py-2.5 text-white font-bold">{entry.shots}</td>
+                    <td className="px-4 py-2.5 text-sky-400 text-sm">{entry.date}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col items-center gap-8 p-4">
+      <div className="text-center">
+        <h2 className="text-2xl font-bold text-white mb-2">Choose Your Opponent</h2>
+        <p className="text-sky-300 text-sm">Each opponent has a different skill level</p>
+      </div>
+      <div className="flex flex-wrap justify-center gap-6">
+        {OPPONENTS.map(opp => (
+          <button
+            key={opp.id}
+            onClick={() => onSelect(opp.id)}
+            className="group flex flex-col items-center gap-3 p-5 bg-slate-800/70 hover:bg-slate-700/80 border-2 border-sky-800/40 hover:border-sky-500/60 rounded-2xl transition-all duration-200 w-64 hover:scale-105 hover:shadow-xl hover:shadow-sky-900/30"
+          >
+            <div className="relative">
+              <img
+                src={opp.image}
+                alt={opp.name}
+                className="w-32 h-32 rounded-full object-cover border-4 border-sky-700/50 group-hover:border-sky-500/70 transition-colors"
+              />
+              <div className="absolute -bottom-2 -right-2 bg-sky-600 text-white text-xs font-bold px-2.5 py-1 rounded-full">
+                Lvl {opp.level}
+              </div>
+            </div>
+            <div className="text-center">
+              <h3 className="text-lg font-bold text-white">{opp.name}</h3>
+              <p className="text-sky-400 text-sm font-medium">{opp.title}</p>
+              <div className="flex justify-center gap-1 mt-1.5">
+                {Array.from({ length: 3 }, (_, i) => (
+                  <div
+                    key={i}
+                    className={`w-2.5 h-2.5 rounded-full ${i < opp.level ? 'bg-yellow-400' : 'bg-slate-600'}`}
+                  />
+                ))}
+              </div>
+              <p className="text-sky-300/70 text-xs mt-2 leading-relaxed">{opp.description}</p>
+            </div>
+          </button>
+        ))}
+      </div>
+      <button
+        onClick={() => setShowLeaderboard(true)}
+        className="flex items-center gap-2 px-6 py-3 bg-yellow-600/20 hover:bg-yellow-600/30 border border-yellow-500/40 text-yellow-300 rounded-xl font-bold transition-all"
+      >
+        <Trophy size={20} />
+        View Leaderboard
+      </button>
+    </div>
+  )
+}
+
 function App() {
-  const [gamePhase, setGamePhase] = useState<GamePhase>('placement')
+  const [gamePhase, setGamePhase] = useState<GamePhase>('difficulty')
+  const [difficulty, setDifficulty] = useState<Difficulty>('easy')
   const [playerBoard, setPlayerBoard] = useState<Board>(createEmptyBoard)
   const [computerBoard, setComputerBoard] = useState<Board>(createEmptyBoard)
   const [computerVisibleBoard, setComputerVisibleBoard] = useState<Board>(createEmptyBoard)
@@ -212,11 +411,19 @@ function App() {
   const [playerTurn, setPlayerTurn] = useState(true)
   const [message, setMessage] = useState('Place your Carrier (5 cells)')
   const [winner, setWinner] = useState<'player' | 'computer' | null>(null)
+  const [playerShotCount, setPlayerShotCount] = useState(0)
 
   const [aiHits, setAiHits] = useState<Coordinate[]>([])
   const [aiQueue, setAiQueue] = useState<Coordinate[]>([])
 
   const currentShip = shipsToPlace[currentShipIndex]
+  const opponent = OPPONENTS.find(o => o.id === difficulty)!
+
+  const handleDifficultySelect = useCallback((d: Difficulty) => {
+    setDifficulty(d)
+    setGamePhase('placement')
+    setMessage(`Place your ${SHIPS_CONFIG[0].name} (${SHIPS_CONFIG[0].size} cells)`)
+  }, [])
 
   const handlePlacementHover = useCallback((row: number, col: number) => {
     if (gamePhase !== 'placement' || !currentShip) return
@@ -258,9 +465,10 @@ function App() {
     setComputerBoard(board)
     setComputerShips(placedShips)
     setGamePhase('battle')
-    setMessage('Your turn! Click on the enemy board to fire.')
+    setMessage(`Your turn! Click on ${opponent.name}'s board to fire.`)
     setPlayerTurn(true)
-  }, [])
+    setPlayerShotCount(0)
+  }, [opponent])
 
   const handleRandomPlacement = useCallback(() => {
     const { board, placedShips } = randomPlacement(SHIPS_CONFIG)
@@ -282,69 +490,122 @@ function App() {
     setHoverCells(new Set())
   }, [])
 
+  const computerTurnEasy = useCallback(() => {
+    const available: Coordinate[] = []
+    for (let r = 0; r < BOARD_SIZE; r++) {
+      for (let c = 0; c < BOARD_SIZE; c++) {
+        if (playerBoard[r][c] === EMPTY || playerBoard[r][c] === SHIP) {
+          available.push({ row: r, col: c })
+        }
+      }
+    }
+    if (available.length === 0) return null
+    return available[Math.floor(Math.random() * available.length)]
+  }, [playerBoard])
+
+  const computerTurnMedium = useCallback(() => {
+    const queue = [...aiQueue]
+    const hits = [...aiHits]
+
+    while (queue.length > 0) {
+      const candidate = queue.shift()!
+      if (playerBoard[candidate.row][candidate.col] === EMPTY || playerBoard[candidate.row][candidate.col] === SHIP) {
+        return { target: candidate, hits, queue }
+      }
+    }
+
+    const available: Coordinate[] = []
+    for (let r = 0; r < BOARD_SIZE; r++) {
+      for (let c = 0; c < BOARD_SIZE; c++) {
+        if (playerBoard[r][c] === EMPTY || playerBoard[r][c] === SHIP) {
+          available.push({ row: r, col: c })
+        }
+      }
+    }
+    if (available.length === 0) return null
+    return { target: available[Math.floor(Math.random() * available.length)], hits, queue }
+  }, [playerBoard, aiQueue, aiHits])
+
+  const computerTurnHard = useCallback(() => {
+    const probMap = computeProbabilityMap(playerBoard, playerShips)
+    let maxProb = -1
+    const candidates: Coordinate[] = []
+
+    for (let r = 0; r < BOARD_SIZE; r++) {
+      for (let c = 0; c < BOARD_SIZE; c++) {
+        if (playerBoard[r][c] === EMPTY || playerBoard[r][c] === SHIP) {
+          if (probMap[r][c] > maxProb) {
+            maxProb = probMap[r][c]
+            candidates.length = 0
+            candidates.push({ row: r, col: c })
+          } else if (probMap[r][c] === maxProb) {
+            candidates.push({ row: r, col: c })
+          }
+        }
+      }
+    }
+    if (candidates.length === 0) return null
+    return candidates[Math.floor(Math.random() * candidates.length)]
+  }, [playerBoard, playerShips])
+
   const computerTurn = useCallback(() => {
     setPlayerTurn(false)
-    setMessage('Enemy is firing...')
+    setMessage(`${opponent.name} is firing...`)
 
     setTimeout(() => {
       let target: Coordinate | null = null
-      const queue = [...aiQueue]
-      const hits = [...aiHits]
+      let newHits = [...aiHits]
+      let newQueue = [...aiQueue]
 
-      while (queue.length > 0 && !target) {
-        const candidate = queue.shift()!
-        if (playerBoard[candidate.row][candidate.col] === EMPTY || playerBoard[candidate.row][candidate.col] === SHIP) {
-          target = candidate
+      if (difficulty === 'easy') {
+        target = computerTurnEasy()
+      } else if (difficulty === 'medium') {
+        const result = computerTurnMedium()
+        if (result) {
+          target = result.target
+          newHits = result.hits
+          newQueue = result.queue
         }
-      }
-
-      if (!target) {
-        const available: Coordinate[] = []
-        for (let r = 0; r < BOARD_SIZE; r++) {
-          for (let c = 0; c < BOARD_SIZE; c++) {
-            if (playerBoard[r][c] === EMPTY || playerBoard[r][c] === SHIP) {
-              available.push({ row: r, col: c })
-            }
-          }
-        }
-        if (available.length > 0) {
-          target = available[Math.floor(Math.random() * available.length)]
-        }
+      } else {
+        target = computerTurnHard()
       }
 
       if (!target) return
 
       const newBoard = playerBoard.map(r => [...r])
-      let newHits = hits
-      let newQueue = queue
 
       if (newBoard[target.row][target.col] === SHIP) {
         newBoard[target.row][target.col] = HIT
-        newHits = [...hits, target]
-        const dirs = [
-          { row: -1, col: 0 }, { row: 1, col: 0 },
-          { row: 0, col: -1 }, { row: 0, col: 1 },
-        ]
-        const neighbors: Coordinate[] = []
-        for (const d of dirs) {
-          const nr = target.row + d.row
-          const nc = target.col + d.col
-          if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
-            if (newBoard[nr][nc] === EMPTY || newBoard[nr][nc] === SHIP) {
-              neighbors.push({ row: nr, col: nc })
+
+        if (difficulty === 'medium') {
+          newHits = [...newHits, target]
+          const dirs = [
+            { row: -1, col: 0 }, { row: 1, col: 0 },
+            { row: 0, col: -1 }, { row: 0, col: 1 },
+          ]
+          const neighbors: Coordinate[] = []
+          for (const d of dirs) {
+            const nr = target.row + d.row
+            const nc = target.col + d.col
+            if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
+              if (newBoard[nr][nc] === EMPTY || newBoard[nr][nc] === SHIP) {
+                neighbors.push({ row: nr, col: nc })
+              }
             }
           }
+          newQueue = [...newQueue, ...neighbors]
         }
-        newQueue = [...queue, ...neighbors]
 
         const updatedPlayerShips = playerShips.map(s => {
           if (!s.sunk && checkSunk(s, newBoard)) {
             s.coords.forEach(c => { newBoard[c.row][c.col] = SUNK })
-            newHits = newHits.filter(h => !s.coords.some(c => c.row === h.row && c.col === h.col))
-            newQueue = newQueue.filter(q => {
-              const cellVal = newBoard[q.row]?.[q.col]
-              return cellVal !== SUNK && cellVal !== HIT && cellVal !== MISS
-            })
+            if (difficulty === 'medium') {
+              newHits = newHits.filter(h => !s.coords.some(c => c.row === h.row && c.col === h.col))
+              newQueue = newQueue.filter(q => {
+                const cellVal = newBoard[q.row]?.[q.col]
+                return cellVal !== SUNK && cellVal !== HIT && cellVal !== MISS
+              })
+            }
             return { ...s, sunk: true }
           }
           return s
@@ -358,7 +619,7 @@ function App() {
           setAiQueue(newQueue)
           setWinner('computer')
           setGamePhase('gameover')
-          setMessage('You lost! The enemy sank all your ships.')
+          setMessage(`${opponent.name} wins! All your ships are sunk.`)
           return
         }
       } else {
@@ -369,14 +630,15 @@ function App() {
       setAiHits(newHits)
       setAiQueue(newQueue)
       setPlayerTurn(true)
-      setMessage('Your turn! Click on the enemy board to fire.')
+      setMessage(`Your turn! Click on ${opponent.name}'s board to fire.`)
     }, 600)
-  }, [playerBoard, playerShips, aiHits, aiQueue])
+  }, [playerBoard, playerShips, aiHits, aiQueue, difficulty, opponent, computerTurnEasy, computerTurnMedium, computerTurnHard])
 
   const handleAttack = useCallback((row: number, col: number) => {
     if (gamePhase !== 'battle' || !playerTurn) return
     if (computerVisibleBoard[row][col] !== EMPTY) return
 
+    setPlayerShotCount(prev => prev + 1)
     const newVisible = computerVisibleBoard.map(r => [...r])
     const newActual = computerBoard.map(r => [...r])
 
@@ -405,9 +667,15 @@ function App() {
 
       const allSunk = updatedShips.every(s => s.sunk)
       if (allSunk) {
+        const finalShots = playerShotCount + 1
         setWinner('player')
         setGamePhase('gameover')
-        setMessage('You won! All enemy ships have been sunk!')
+        setMessage(`You defeated ${opponent.name} in ${finalShots} shots!`)
+        saveToLeaderboard({
+          opponent: opponent.name,
+          shots: finalShots,
+          date: new Date().toLocaleDateString(),
+        })
         return
       }
       setMessage('Direct hit!')
@@ -418,7 +686,7 @@ function App() {
     }
 
     setTimeout(() => computerTurn(), 400)
-  }, [gamePhase, playerTurn, computerVisibleBoard, computerBoard, computerShips, computerTurn])
+  }, [gamePhase, playerTurn, computerVisibleBoard, computerBoard, computerShips, computerTurn, playerShotCount, opponent])
 
   const handleBattleHover = useCallback((row: number, col: number) => {
     if (gamePhase !== 'battle' || !playerTurn) return
@@ -427,7 +695,7 @@ function App() {
   }, [gamePhase, playerTurn, computerVisibleBoard])
 
   const resetGame = useCallback(() => {
-    setGamePhase('placement')
+    setGamePhase('difficulty')
     setPlayerBoard(createEmptyBoard())
     setComputerBoard(createEmptyBoard())
     setComputerVisibleBoard(createEmptyBoard())
@@ -442,6 +710,7 @@ function App() {
     setWinner(null)
     setAiHits([])
     setAiQueue([])
+    setPlayerShotCount(0)
   }, [])
 
   const allPlaced = shipsToPlace.every(s => s.placed)
@@ -458,16 +727,27 @@ function App() {
       </header>
 
       <div className="flex-1 flex flex-col items-center justify-center gap-6 p-4">
-        <div className={`text-center px-6 py-3 rounded-lg font-semibold text-lg tracking-wide ${
-          winner === 'player' ? 'bg-green-600/30 text-green-300 border border-green-500/40' :
-          winner === 'computer' ? 'bg-red-600/30 text-red-300 border border-red-500/40' :
-          'bg-sky-800/30 text-sky-200 border border-sky-600/30'
-        }`}>
-          {message}
-        </div>
+        {gamePhase === 'difficulty' && (
+          <DifficultySelect onSelect={handleDifficultySelect} />
+        )}
+
+        {gamePhase !== 'difficulty' && (
+          <div className={`text-center px-6 py-3 rounded-lg font-semibold text-lg tracking-wide ${
+            winner === 'player' ? 'bg-green-600/30 text-green-300 border border-green-500/40' :
+            winner === 'computer' ? 'bg-red-600/30 text-red-300 border border-red-500/40' :
+            'bg-sky-800/30 text-sky-200 border border-sky-600/30'
+          }`}>
+            {message}
+          </div>
+        )}
 
         {gamePhase === 'placement' && (
           <div className="flex flex-col items-center gap-4">
+            <div className="flex items-center gap-3 px-4 py-2 bg-slate-800/60 rounded-xl border border-sky-800/30">
+              <img src={opponent.image} alt={opponent.name} className="w-10 h-10 rounded-full object-cover border-2 border-sky-700/50" />
+              <span className="text-sky-200 font-medium">vs {opponent.name}</span>
+              <span className="text-xs text-sky-400 bg-sky-800/40 px-2 py-0.5 rounded-full">Lvl {opponent.level}</span>
+            </div>
             <div className="flex items-center gap-3">
               <button
                 onClick={() => setIsHorizontal(!isHorizontal)}
@@ -531,6 +811,14 @@ function App() {
 
         {(gamePhase === 'battle' || gamePhase === 'gameover') && (
           <div className="flex flex-col items-center gap-6">
+            <div className="flex items-center gap-4 px-4 py-2 bg-slate-800/60 rounded-xl border border-sky-800/30">
+              <img src={opponent.image} alt={opponent.name} className="w-10 h-10 rounded-full object-cover border-2 border-sky-700/50" />
+              <span className="text-sky-200 font-medium">vs {opponent.name}</span>
+              <span className="text-xs text-sky-400 bg-sky-800/40 px-2 py-0.5 rounded-full">Lvl {opponent.level}</span>
+              <div className="w-px h-6 bg-sky-700/40" />
+              <span className="text-sky-300 text-sm font-medium">Shots: {playerShotCount}</span>
+            </div>
+
             <div className="flex gap-6 text-sm font-medium">
               <div className="flex items-center gap-2 px-3 py-1.5 bg-sky-800/40 rounded-lg border border-sky-700/30">
                 <div className="w-3 h-3 rounded-full bg-red-500" />
@@ -550,7 +838,7 @@ function App() {
                 onCellHover={handleBattleHover}
                 onMouseLeave={() => setHoverCells(new Set())}
                 hoverCells={hoverCells}
-                label="Enemy Waters"
+                label={`${opponent.name}'s Waters`}
                 icon={<Crosshair className="text-red-400" size={20} />}
               />
               <BoardGrid
@@ -562,13 +850,15 @@ function App() {
             </div>
 
             {gamePhase === 'gameover' && (
-              <button
-                onClick={resetGame}
-                className="flex items-center gap-2 px-8 py-3 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-bold text-lg transition-all shadow-lg"
-              >
-                <RefreshCw size={20} />
-                Play Again
-              </button>
+              <div className="flex gap-4">
+                <button
+                  onClick={resetGame}
+                  className="flex items-center gap-2 px-8 py-3 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-bold text-lg transition-all shadow-lg"
+                >
+                  <RefreshCw size={20} />
+                  Play Again
+                </button>
+              </div>
             )}
           </div>
         )}
