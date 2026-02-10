@@ -207,29 +207,68 @@ function getAudioCtx(): AudioContext {
 
 function playHitSound() {
   const ctx = getAudioCtx()
-  const osc = ctx.createOscillator()
-  const gain = ctx.createGain()
-  osc.connect(gain)
-  gain.connect(ctx.destination)
-  osc.type = 'sawtooth'
-  osc.frequency.setValueAtTime(200, ctx.currentTime)
-  osc.frequency.exponentialRampToValueAtTime(60, ctx.currentTime + 0.15)
-  gain.gain.setValueAtTime(0.4, ctx.currentTime)
-  gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2)
-  osc.start(ctx.currentTime)
-  osc.stop(ctx.currentTime + 0.2)
+  const t = ctx.currentTime
 
-  const noise = ctx.createBufferSource()
-  const buf = ctx.createBuffer(1, ctx.sampleRate * 0.15, ctx.sampleRate)
-  const data = buf.getChannelData(0)
-  for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * 0.3
-  noise.buffer = buf
+  const boom = ctx.createOscillator()
+  const boomGain = ctx.createGain()
+  boom.connect(boomGain)
+  boomGain.connect(ctx.destination)
+  boom.type = 'sine'
+  boom.frequency.setValueAtTime(120, t)
+  boom.frequency.exponentialRampToValueAtTime(30, t + 0.3)
+  boomGain.gain.setValueAtTime(0.6, t)
+  boomGain.gain.exponentialRampToValueAtTime(0.01, t + 0.35)
+  boom.start(t)
+  boom.stop(t + 0.35)
+
+  const crack = ctx.createOscillator()
+  const crackGain = ctx.createGain()
+  crack.connect(crackGain)
+  crackGain.connect(ctx.destination)
+  crack.type = 'square'
+  crack.frequency.setValueAtTime(800, t + 0.02)
+  crack.frequency.exponentialRampToValueAtTime(100, t + 0.12)
+  crackGain.gain.setValueAtTime(0, t)
+  crackGain.gain.linearRampToValueAtTime(0.25, t + 0.02)
+  crackGain.gain.exponentialRampToValueAtTime(0.01, t + 0.15)
+  crack.start(t)
+  crack.stop(t + 0.15)
+
+  const impactNoise = ctx.createBufferSource()
+  const noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 0.4, ctx.sampleRate)
+  const noiseData = noiseBuf.getChannelData(0)
+  for (let i = 0; i < noiseData.length; i++) noiseData[i] = (Math.random() * 2 - 1)
+  impactNoise.buffer = noiseBuf
+  const noiseFilter = ctx.createBiquadFilter()
+  noiseFilter.type = 'bandpass'
+  noiseFilter.frequency.setValueAtTime(600, t)
+  noiseFilter.frequency.exponentialRampToValueAtTime(100, t + 0.4)
+  noiseFilter.Q.setValueAtTime(1.5, t)
   const noiseGain = ctx.createGain()
-  noise.connect(noiseGain)
+  impactNoise.connect(noiseFilter)
+  noiseFilter.connect(noiseGain)
   noiseGain.connect(ctx.destination)
-  noiseGain.gain.setValueAtTime(0.3, ctx.currentTime)
-  noiseGain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15)
-  noise.start(ctx.currentTime)
+  noiseGain.gain.setValueAtTime(0.35, t + 0.01)
+  noiseGain.gain.exponentialRampToValueAtTime(0.01, t + 0.4)
+  impactNoise.start(t + 0.01)
+
+  const splash = ctx.createBufferSource()
+  const splashBuf = ctx.createBuffer(1, ctx.sampleRate * 0.3, ctx.sampleRate)
+  const splashData = splashBuf.getChannelData(0)
+  for (let i = 0; i < splashData.length; i++) splashData[i] = (Math.random() * 2 - 1)
+  splash.buffer = splashBuf
+  const splashFilter = ctx.createBiquadFilter()
+  splashFilter.type = 'highpass'
+  splashFilter.frequency.setValueAtTime(2000, t + 0.05)
+  splashFilter.frequency.exponentialRampToValueAtTime(400, t + 0.35)
+  const splashGain = ctx.createGain()
+  splash.connect(splashFilter)
+  splashFilter.connect(splashGain)
+  splashGain.connect(ctx.destination)
+  splashGain.gain.setValueAtTime(0, t)
+  splashGain.gain.linearRampToValueAtTime(0.15, t + 0.06)
+  splashGain.gain.exponentialRampToValueAtTime(0.01, t + 0.35)
+  splash.start(t + 0.05)
 }
 
 function playMissSound() {
