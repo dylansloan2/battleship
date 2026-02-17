@@ -407,7 +407,7 @@ function DifficultySelect({ onSelect }: { onSelect: (d: Difficulty) => void }) {
       <div className="flex flex-col items-center gap-6 p-4 max-w-2xl mx-auto">
         <button
           onClick={() => setShowLeaderboard(false)}
-          className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium transition-colors self-start"
+          className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium transition-colors self-end"
         >
           <ArrowLeft size={16} />
           Back
